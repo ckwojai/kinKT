@@ -43,7 +43,7 @@ COPY --from=gcr.io/rentalios/python_dependencies:latest /usr/local /usr/local
 	   #+end_src
 	2) To add new dependencies, modify requirements.txt under branch [[https://source.cloud.google.com/rentalios/rentalios-scraper/+/python_dependencies:][python_dependencies]] and push the changes
 	3) Cloud builder will automatically run and overwrite the latest dependency images.
-	4) Once step 3 is done, re-deploy your scraper image. See Scraper Deployment Above.
+	4) Once step 3 is done, re-deploy your scraper image. See [[#scraper-deployment][Scraper Deployment]] Above.
 * ML Model: main.py in branch [[https://source.cloud.google.com/rentalios/rentalios-api/+/joel_prediction:][joel_prediction]] under rentalios-api
 ** Functions Overview
    | Class Function                                | Description                                                                          |
@@ -108,7 +108,7 @@ train_query = [user_query[0][0:12]]
 * Suggestions
 ** ML Model
 	1) Decision needs to be made whether price prediction (stat_analysis) should incorporate KNN. It's not right now. I am leaning towards KNN since it will show more time dependence.
-	2) Hyperparameter find tuning is going to be difficult; see Dillema in Useful INFO above.
+	2) Hyperparameter find tuning is going to be difficult; see [[#dilemma][Dilemma]] in Useful INFO above.
 	3) May want to normalize all the inputs to the KNN. Lat/Long to reference point is like 0.0x apart; categorical are like 0/1 apart; days_old are 0-30+ apart. Search for KNN normalization.
 ** Google Cloud
 	1) May want to limit all access to the database to be internal (through google db_instance) instead of ac/pw pair. May have problems doing it within scraper docker container
