@@ -59,7 +59,7 @@ COPY --from=gcr.io/rentalios/python_dependencies:latest /usr/local /usr/local
    | get_parser()                                  | get parser object to help parse query params from request; used in parse_query       |
    | get_cursor()                                  | get a mysql_conn.cursor; used in get_comparables and then passed in extract_listings |
 ** Notes
-	1) A Jupyter Notebook for analyzing and testing could be found in this repoM.
+	1) A Jupyter Notebook for analyzing and testing could be found in this repo [[https://github.com/ckwojai/kinKT/blob/master/KNN_prediction%2520analysis.ipynb][here]].
 	2) No "Training" is involved in KNN, all it is doing is comparing listings with our reference point
 	   #+begin_src python
 my_pipeline = NearestNeighbors(n_neighbors=n_neighbors, algorithm='ball_tree') # create pipeline
