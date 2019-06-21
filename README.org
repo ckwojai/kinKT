@@ -1,0 +1,114 @@
+* Table of Contents :TOC_3:
+- [[#scraper-deployment][Scraper Deployment]]
+- [[#scraper-monitoring][Scraper Monitoring]]
+- [[#python-dependencies-update][Python Dependencies Update]]
+- [[#ml-model-mainpy-in-branch-joel_prediction-under-rentalios-api][ML Model: main.py in branch joel_prediction under rentalios-api]]
+  - [[#functions-overview][Functions Overview]]
+  - [[#notes][Notes]]
+- [[#useful-info][Useful INFO]]
+  - [[#test-cases][Test Cases]]
+    - [[#cases-using-only-statistical-analysis][Cases using ONLY statistical analysis]]
+    - [[#cases-using-knn-in-addition-to-stats][Cases using KNN in addition to Stats]]
+  - [[#our-pipeline][Our Pipeline]]
+  - [[#dilemma][Dilemma]]
+- [[#suggestions][Suggestions]]
+  - [[#ml-model][ML Model]]
+  - [[#google-cloud][Google Cloud]]
+
+* Scraper Deployment
+	1) Two cloud builders are linked to two branches under [[https://source.cloud.google.com/rentalios/rentalios-scraper][rentalios-scraper]]: [[https://source.cloud.google.com/rentalios/rentalios-scraper/+/craigslist_docker:][craigslist_docker]] & [[https://source.cloud.google.com/rentalios/rentalios-scraper/+/spareroom_docker:][spareroom_docker]]
+	2) To deploy new version of the container, push changes to associated branch. Cloud builder should automatically run and build within ~1 minute.
+	3) Go to [[https://console.cloud.google.com/cloud-build/builds?project=rentalios][Cloud Build History]], click on the latest ran build, copy the latest image name that was being built. Ex: gcr.io/rentalios/spareroom_docker:3a9424e
+	4) SSH into the [[https://console.cloud.google.com/compute/instances?project=rentalios&instancessize=50][VM instance]], and run the following commands
+	   #+begin_src shell
+$docker ps # Find the old container id: [container-id]
+$docker rm [container-id] --force # Remove the old running container
+$docker pull [image-name] #name of latest image from step 3) above
+$docker run --name [spareroom/craigslist] -d -it [image-name] #-d: detach mode; -it: interactive; --name: give a name for the container
+	   #+end_src
+* Scraper Monitoring
+	1) SSH into the [[https://console.cloud.google.com/compute/instances?project=rentalios&instancessize=50][VM instance]], and run the following commands
+	   #+begin_src shell
+$docker ps # Find the container id in which the associated scraper is running
+$docker exec -it [container-id] bash # Run bash in the associatd contaier, you will be inside the container's system after this command.
+# Below are ran inside container's bash shell
+$tail -100 /var/log/cron.log # View the last 100 lines of the file cron.log <-- contains all logs from scraper; Use cat if you want to view the entire contents
+	   #+end_src
+* Python Dependencies Update
+	1) To shorten build time, both Dockerfiles copy python dependencies directly during build steps
+	   #+begin_src docker
+FROM base
+# Copy from latest image
+COPY --from=gcr.io/rentalios/python_dependencies:latest /usr/local /usr/local
+	   #+end_src
+	2) To add new dependencies, modify requirements.txt under branch [[https://source.cloud.google.com/rentalios/rentalios-scraper/+/python_dependencies:][python_dependencies]] and push the changes
+	3) Cloud builder will automatically run and overwrite the latest dependency images.
+	4) Once step 3 is done, re-deploy your scraper image. See Scraper Deployment Above.
+* ML Model: main.py in branch [[https://source.cloud.google.com/rentalios/rentalios-api/+/joel_prediction:][joel_prediction]] under rentalios-api
+** Functions Overview
+   | Class Function                                | Description                                                                          |
+   |-----------------------------------------------+--------------------------------------------------------------------------------------|
+   | change_tofloat(row)                           | latitude & longitude to float; run_id to days_old                                    |
+   | transform_listings(listings)                  | return needed features in listings (not using price nor sqft)                        |
+   | parse_query(request)                          | return user_query parsed from frontend request                                       |
+   | extract_listings(cursor, latitude, longitude) | get all listings within R radius from referenced lat & long                          |
+   | train(listings, user_query)                   | pass listings and user_query into KNN and return K listings                          |
+   | statistical_analysis(listings)                | find median, median+- std, percentile of input listings                              |
+   | get_comparables(request)                      | use the above functions and return json response                                     |
+   | main(request)                                 | handles request from frontend directly, use get_comparables                          |
+   | get_parser()                                  | get parser object to help parse query params from request; used in parse_query       |
+   | get_cursor()                                  | get a mysql_conn.cursor; used in get_comparables and then passed in extract_listings |
+** Notes
+	1) A Jupyter Notebook for analyzing and testing could be found in this repoM.
+	2) No "Training" is involved in KNN, all it is doing is comparing listings with our reference point
+	   #+begin_src python
+my_pipeline = NearestNeighbors(n_neighbors=n_neighbors, algorithm='ball_tree') # create pipeline
+my_pipeline.fit(train_listings) # pass in pool of listings
+_, indexes = my_pipeline.kneighbors(train_query) # find the 10 nearest neighbors to train_query (reference point)
+	   #+end_src
+	3) The convertion from datetime to constant days_old is done in function change_toflaot(row)
+	   #+begin_src python
+# The complexity is just O(n), don't think this will cause any bottleneck issues.
+row[0] = abs((row[0] - datetime.now()).days)
+	   #+end_src
+	4) The attributes price & sqft are not considered in the KNN algorithm
+	   #+begin_src python
+# in transform_listings
+return [i[:12] for i in listings]
+# in train
+train_listings = transform_listings(listings)
+train_query = [user_query[0][0:12]]
+	   #+end_src
+* Useful INFO
+** Test Cases
+*** Cases using ONLY statistical analysis
+	| Search Input                            |         Long |        Lat | Current Price | Expected Price | Request URL |
+	|-----------------------------------------+--------------+------------+---------------+----------------+-------------|
+	| 2070 Glen Way, East Palo Alto, CA 94303 |  -122.144822 | 37.4636192 |          1300 |       950-1200 | [[https://us-central1-rentalios.cloudfunctions.net/knn_predict?longitude=-122.144822&latitude=37.4636192&sqft=1&private_room=0&private_bath=0&house_type=0&laundry=0&parking=0&cats=0&dogs=0&furnished=0&smoking=0&wheelchair=0][URL]]         |
+	| 3128 San Juan Pl, Union City, CA 94587  | -122.0655899 | 37.5962803 |           850 |        850-100 | [[https://us-central1-rentalios.cloudfunctions.net/knn_predict?longitude=-122.0655899&latitude=37.5962803&sqft=1&private_room=0&private_bath=0&house_type=0&laundry=0&parking=0&cats=0&dogs=0&furnished=0&smoking=0&wheelchair=0][URL]]         |
+	| 94105                                   | -122.3915063 | 37.7890183 |          1500 |          Lower | [[https://us-central1-rentalios.cloudfunctions.net/knn_predict?longitude=-122.3915063&latitude=37.7890183&sqft=1&private_room=0&private_bath=0&house_type=0&laundry=0&parking=0&cats=0&dogs=0&furnished=0&smoking=0&wheelchair=0][URL]]         |
+*** Cases using KNN in addition to Stats
+	| Search Input                            |        Lat |         Long | Original Price |     New Price | Expected Price | Request URL | Notes                              |
+	|-----------------------------------------+------------+--------------+----------------+---------------+----------------+-------------+------------------------------------|
+	| 2070 Glen Way, East Palo Alto, CA 94303 | 37.4636192 |  -122.144822 |  941-1300-1658 | 780-1370-1959 |       950-1200 | [[https://us-central1-rentalios.cloudfunctions.net/knn_predict?longitude=-122.144822&latitude=37.4636192&sqft=1&private_room=0&private_bath=0&house_type=0&laundry=0&parking=0&cats=0&dogs=0&furnished=0&smoking=0&wheelchair=0][URL]]         | One room that's $3000, an outliner |
+	| 3128 San Juan Pl, Union City, CA 94587  | 37.5962803 | -122.0655899 |   554-850-1145 |   739-837-934 |       850-1000 | [[https://us-central1-rentalios.cloudfunctions.net/knn_predict?longitude=-122.0655899&latitude=37.5962803&sqft=1&private_room=0&private_bath=0&house_type=0&laundry=0&parking=0&cats=0&dogs=0&furnished=0&smoking=0&wheelchair=0][URL]]         |                                    |
+	| 94105                                   | 37.7890183 | -122.3915063 |  914-1500-2085 | 691-1162-1632 |          Lower | [[https://us-central1-rentalios.cloudfunctions.net/knn_predict?longitude=-122.3915063&latitude=37.7890183&sqft=1&private_room=0&private_bath=0&house_type=0&laundry=0&parking=0&cats=0&dogs=0&furnished=0&smoking=0&wheelchair=0][URL]]         |                                    |
+
+** Our Pipeline
+	1) User wants to find price prediction around a certain address. Call this test case /T/.
+	2) Pull all /L/ listings from DB within /R/ miles radius. /R/ = 3 right now; /L/ could be 30, could be 15, could be 4 depending on /R/ and the test case /T/
+	3) Pass /L/ and /T/ in our /K/-NN Algorithm, which considers /A/ attributes in /L/, it returns /K/ most relevant comparables: /C/. /K/ = 10 right now. /A/ includes everything except price & sqft
+	4) Do statistical analysis on /C/, namely std & median, max/min=med+-std (directly on /L/ in current <2019-06-21 Fri> version)
+	5) Price prediction = median. Comparable = /C/
+** Dilemma
+	1) We need to tune these hyper-parameters: /M/, /K/, /A/; but we don't really have a metric for what price prediction is the "best".
+	2) On one hand, we would like the algorithm to be as general as possible (work with most cases). However, we can only tune this parameters with limited test cases (3 cases above).
+	3) Example: we tested the above three cases and figured that /R/ = 2, /K/ = 20 works the "best". However, because we limit radius to 2 mile, for a lot of other cases, only /L/ < 10 is returned from our DB. We do statistic analysis on these /L/ listings and get a "bad" price prediction, which could've been "better" if we set /R/ = 5 and get /L/ > 20 listings.
+
+* Suggestions
+** ML Model
+	1) Decision needs to be made whether price prediction (stat_analysis) should incorporate KNN. It's not right now. I am leaning towards KNN since it will show more time dependence.
+	2) Hyperparameter find tuning is going to be difficult; see Dillema in Useful INFO above.
+	3) May want to normalize all the inputs to the KNN. Lat/Long to reference point is like 0.0x apart; categorical are like 0/1 apart; days_old are 0-30+ apart. Search for KNN normalization.
+** Google Cloud
+	1) May want to limit all access to the database to be internal (through google db_instance) instead of ac/pw pair. May have problems doing it within scraper docker container
